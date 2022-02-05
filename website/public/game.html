@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title>War Game [Alpha]</title>
+    <script type="text/javascript">
+      let game_id;
+
+      window.onload = (e) => {
+        //get url param game_id
+        const queryString = window.location.search;
+        const urlParams = new URLSearchParams(queryString);
+
+        game_id = urlParams.get('game_id');
+        if(game_id === null) {
+            //show error
+            console.log("error")
+        }
+
+      }
+    </script>
+
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rubik+Beastly&family=Titillium+Web:wght@200;300;900&display=swap" rel="stylesheet">
+
+    <style media="screen">
+    body {
+      font-family: 'Titillium Web', sans-serif;
+      font-weight: lighter;
+      cursor:url('img/cursor_default.png'), auto;
+    }
+    button{
+      cursor:url('img/cursor_default_active.png'), auto;
+    }
+      .default_hidden{
+        display: none;
+      }
+      #menu_div {
+        position: fixed;
+        left:0;
+        top:0;
+        bottom:0;
+        width: 25%;
+        z-index: 999;
+        padding: 2vw;
+        background-color: white;
+        overflow-y: scroll;
+        text-align: center;
+      }
+      #menu_close_button{
+        position: absolute;
+        right:1vw;
+        top:1vw;
+        width:5%;
+        padding: .5vw;
+        background-color: gray;
+        border-radius: .5vw;
+        color: while;
+        font-weight: bold;
+        font-family: 'Rubik Beastly', cursive;
+        font-size: 2vw;
+      }
+      h4,
+      h5{
+        font-weight: lighter;
+        width: 100%;
+        font-size: 2vw;
+        font-stretch: expanded;
+        margin:0;
+        margin-bottom: .25vh;
+      }
+
+      #unit_list{
+        width: 100%;
+        border-top: .2vh black solid;
+      }
+      #unit_list > canvas {
+        display: inline-block;
+      }
+      #selected_unit {
+
+        border-top: .2vh black solid;
+      }
+      #unit_placement_buttons {
+        padding:0;
+        margin: 0;
+        padding-top: 1vh;
+        border-top: .2vh black solid;
+      }
+      #unit_placement_buttons > button {
+        width:12%;
+        display:inline-grid;
+        font-size: 1vw;
+        margin:0;
+        padding:.2vw .2vh;
+        border-radius: 0;
+        border-width: .25vw .25vh;
+        border-color: black;
+        border-style: solid;
+      }
+      #remove_unit_button,
+      #move_unit,
+      #attack,
+      #hud_div > button {
+        height:3vw;
+        font-size: 1vw;
+        padding: .1vw;
+        margin:1vw;
+      }
+      #turn_label{
+        font-size: 3vw;
+      }
+    </style>
+  </head>
+  <body>
+
+    <div id="hud_div">
+      <button id="ready_button" onclick="ready()">Ready</button>
+      <button id="start_button" onclick="start_battle()">Start Battle</button>
+      <button id="end_turn_button" onclick="end_turn()">End Turn</button>
+      <span id="turn_label">Loading Map (first time takes a bit...)</span>
+    </div>
+    <div id="map_div">
+      <canvas id="main_map_canvas" width="3000" height="3000"></canvas>
+    </div>
+    <div id="menu_div" class="default_hidden">
+      <span id="menu_close_button" onclick="deselect_tile()">X</span>
+      <div id="tile_details" class="default_hidden">
+        <h4><span id="tile_detail_coords"></span></h4>
+        <div id="selected_unit" class="default_hidden">
+          <img id="selected_unit_img">
+          <br>
+          <button id="move_unit" onclick="move_unit()" class="default_hidden" >Move</button>
+          <button id="attack" onclick="attack()" class="default_hidden" >Attack</button>
+
+          <div id="unit_stats">
+            <h5>Owner: <span id="stat_owner"></span></h5>
+            <h5>Rarity: <span id="stat_rarity"></span></h5>
+            <h5>Placement Cost: <span id="stats_cost"></span></h5>
+            <h5>SR ATK: <span id="stat_sr_atk"></span></h5>
+            <h5>LR ATK: <span id="stat_lr_atk"></span></h5>
+            <h5>Defence: <span id="stat_def_atk"></span></h5>
+            <h5>Speed: <span id="stat_spd_atk"></span></h5>
+            <h5>Health: <span id="stat_max_h_atk"></span></h5>
+          </div>
+
+          <button id="remove_unit_button" class="default_hidden" onclick="remove_selected_unit()">Remove Unit</button>
+
+          <div id="unit_placement_buttons">
+          </div>
+        </div>
+        <div id="unit_list">
+        </div>
+      </div>
+    </div>
+
+
+    <script src="web3.min.js" charset="utf-8"></script>
+    <script src="wargame_abi.js" charset="utf-8"></script>
+    <script src="unit_token_abi.js" charset="utf-8"></script>
+    <script src="bn.js" charset="utf-8"></script>
+    <script src="keccak256.js" charset="utf-8"></script>
+    <script src="terrain_generator.js" charset="utf-8"></script>
+    <script src="piece_generator.js" charset="utf-8"></script>
+    <script type="text/javascript">
+
+
+        let Game_States = [
+          "No_Game",
+          "Open",
+          "Closed",
+          "Playing",
+          "Ended",
+          "Draw"]
+        let Player_States = [
+          "No_Player",
+          "Not_Ready",
+          "Ready",
+          "Win",
+          "Dead"
+        ]
+        let Stats = [
+          "short_range_atk",
+          "long_range_atk",
+          "defense",
+          "speed",
+          "max_hp"
+        ]
+        let Terrain_Types = [
+          "player_safe",
+          "water",
+          "sand",
+          "low_grass",
+          "high_grass",
+          "mountain"
+        ]
+
+    let accounts;
+    /*
+    let war_core_address = "0x4b92CF1714B2078e0cE7F7819b181440E5f9fa29"
+    let unit_token_address =  "0xB8490E968c4065bc16Be77952e38548F3CbF4CE5"
+*/
+
+  //ropsten
+    let war_core_address = "0xFe9AD16Caf49EeF552B1183b4f9DeCfb7702177a"
+    let unit_token_address =  "0xfa1453Af15d324A99F6E1aecda74CCd09b06F866"
+    let war_core_instance
+    let unit_token_instance
+
+
+
+    let water_array
+    let sand_array
+    let grass_1_array
+    let grass_2_array
+    let mountain_array
+
+
+      const ethEnabled = async () => {
+        if (window.ethereum) {
+          accounts = (await window.ethereum.send('eth_requestAccounts')).result;
+          window.web3 = new Web3(window.ethereum);
+          war_core_instance = new window.web3.eth.Contract(wargame_abi, war_core_address)
+          unit_token_instance = new window.web3.eth.Contract(unit_token_abi, unit_token_address)
+          let source_sprite_size = 32
+          let terrain_size = 32
+          mountain_array = [
+            await get_sprite("m1.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("m2.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("m3.png", source_sprite_size, 0, 0, terrain_size)
+          ]
+          grass_2_array = [
+            await get_sprite("g1.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("g2.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("g3.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("g4.png", source_sprite_size, 0, 0, terrain_size)
+          ]
+          grass_1_array = [
+            await get_sprite("g1.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("g2.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("g3.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("g4.png", source_sprite_size, 0, 0, terrain_size)
+          ]
+          sand_array = [
+            await get_sprite("s1.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("s2.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("s3.png", source_sprite_size, 0, 0, terrain_size)
+          ]
+          water_array = [
+            await get_sprite("w1.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("w2.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("w3.png", source_sprite_size, 0, 0, terrain_size),
+            await get_sprite("w4.png", source_sprite_size, 0, 0, terrain_size)
+          ]
+          await populate_game();
+
+          await draw_hud();
+          return true;
+        }
+        return false;
+      }
+      ethEnabled()
+
+      let placed_units = {};
+      let is_occupied = {}
+      let game_details;
+
+      let players = []
+      let user_player_idx = -1;
+
+      async function populate_game(){
+        await populate_unit_list();
+        //get game details
+        game_details = await war_core_instance.methods.games(game_id).call();
+        let player_count = await war_core_instance.methods.get_player_count(game_id).call()
+        placed_units = {}
+        is_occupied = {}
+        players = []
+        for(let player_idx = 0; player_idx < player_count; player_idx++){
+            let player = await war_core_instance.methods.get_player_by_index(game_id, player_idx).call();
+            player.is_user = accounts[0].toLowerCase() === player.player_address.toLowerCase()
+            if(player.is_user){
+              user_player_idx = player_idx
+            }
+            players.push(player);
+            placed_units[player.player_address.toLowerCase()] = [];
+
+            for(let unit_idx = 0; unit_idx < 32;unit_idx++){
+
+
+              let unit = await war_core_instance.methods.get_player_units(game_id, player.player_address.toLowerCase(), unit_idx).call()
+
+              if(unit.hp.toString() !== "0" ){
+
+                if(is_occupied[unit.x] === undefined){
+                  is_occupied[unit.x] = {};
+                }
+                is_occupied[unit.x][unit.y] = unit;
+                is_occupied[unit.x][unit.y].owner = player.player_address.toLowerCase();
+                is_occupied[unit.x][unit.y].slot = unit_idx;
+                placed_units[player.player_address.toLowerCase()].push(unit)
+              } else {
+                placed_units[player.player_address.toLowerCase()].push(null)
+              }
+
+            }
+        }
+
+
+        if(game_details.game_state === "4"){
+          //game over
+          if(players[user_player_idx] === undefined){
+
+              document.getElementById("turn_label").innerText = "Game Over"
+          } else if(players[user_player_idx].player_state === "4"){
+            //show lose screen
+              document.getElementById("turn_label").innerText = "Lose"
+          } else if(players[user_player_idx].player_state === "3") {
+            //show win
+              document.getElementById("turn_label").innerText = "Win"
+          }
+
+
+        } else if(game_details.game_state === "5"){
+            //show draw
+            console.log("draw")
+              document.getElementById("turn_label").innerText = "Draw"
+
+        }else if(game_details.game_state !== "3"){
+          if(players[user_player_idx] === undefined){
+            document.getElementById("turn_label").innerText = "Spectator"
+            // TODO add join game button
+          } else if(players[user_player_idx].player_state === "1"){
+            document.getElementById("turn_label").innerText = "Not Ready"
+          } else if(players[user_player_idx].player_state === "2"){
+            document.getElementById("turn_label").innerText = "Ready"
+          }
+
+        } else if(players[user_player_idx] === undefined){
+          document.getElementById("turn_label").innerText = "Spectator"
+
+        } else if(players[game_details.player_turn].is_user){
+
+          document.getElementById("turn_label").innerText = "Your Turn"
+        } else {
+
+          document.getElementById("turn_label").innerText = "Enemy Turn"
+        }
+
+        draw_map(0,0);
+        //mouse handler
+        document.getElementById("main_map_canvas").onclick = map_click_handlier
+
+      }
+
+      let selected_tile = {x_tile:-1, y_tile:-1}
+      async function place_selected_unit(unit_idx){
+
+        // get war_core_address is approved for all
+        let is_approved = await unit_token_instance.methods.isApprovedForAll(accounts[0], war_core_address).call();
+        if(!is_approved){
+
+          await unit_token_instance.methods.setApprovalForAll(war_core_address, true).send({from: accounts[0]})
+
+        }
+        await war_core_instance.methods.place_unit(game_id, unit_idx-1, selected_unit.token_id, selected_tile.tile_x, selected_tile.tile_y).send({from:accounts[0]})
+
+
+        await hide_menu()
+        await populate_game();
+      }
+
+      function check_occupancy(x,y){
+
+        return (
+          is_occupied[x] !== undefined
+          && is_occupied[x][y] !== undefined
+          && is_occupied[x][y] !== null
+        )
+
+      }
+      async function draw_unit_on_map(selected_unit, selected_tile){
+        let unit_icon_canvas = await get_assembled_piece(selected_unit.stats, selected_unit.rarity, 32);
+        console.log(unit_icon_canvas)
+        let main_map_canvas = document.getElementById("main_map_canvas")
+        let map_context = main_map_canvas.getContext('2d');
+        console.log(selected_tile)
+        map_context.drawImage(unit_icon_canvas, 32*selected_tile.tile_x, 32*selected_tile.tile_y);
+
+
+      }
+      function select_tile(new_tile_pos){
+        document.getElementById("tile_details").style.display = "block"
+        selected_tile = new_tile_pos;
+        //highlight tile
+        show_highlight(new_tile_pos)
+        //show menu for tile
+        show_menu(new_tile_pos)
+      }
+      function deselect_tile(){
+          document.getElementById("tile_details").style.display = "none"
+        selected_tile = {x_tile:-1, y_tile:-1}
+        //erase highlight
+        clear_highlight()
+        //hide menu for tile
+        hide_menu();
+      }
+
+      function get_distance(p1, p2){
+        return Math.floor(
+                  Math.sqrt(
+                      ( Math.pow((parseInt(p1.x) - parseInt(p2.x)),2)
+                      + Math.pow((parseInt(p1.y) - parseInt(p2.y)),2)
+                    )));
+      }
+
+      function show_highlight(pos){
+
+      }
+      function clear_highlight(pos){
+
+      }
+      function clear_all_highlights(){
+
+      }
+
+      let selected_unit;
+      async function remove_selected_unit(){
+        console.log(selected_unit)
+        let occupancy = is_occupied[selected_tile.tile_x][selected_tile.tile_y].slot;
+
+        await war_core_instance.methods.remove_unit(game_id, occupancy).send({from:accounts[0]})
+
+        placed_units[accounts[0].toLowerCase()][selected_unit.slot] = null
+
+        is_occupied[selected_tile.tile_x][selected_tile.tile_y] = undefined;
+        selected_unit = null;
+        await hide_menu()
+        await populate_game();
+      }
+
+
+      async function ready(){
+        await war_core_instance.methods.ready(game_id).send({from:accounts[0]})
+
+        await hide_menu()
+        await populate_game();
+        await draw_hud();
+      }
+
+      async function start_battle(){
+        await war_core_instance.methods.start_game(game_id).send({from:accounts[0]})
+
+        await populate_game();
+        await draw_hud();
+
+      }
+      async function end_turn(){
+        await war_core_instance.methods.end_turn(game_id).send({from:accounts[0]})
+                await populate_game();
+                await draw_hud();
+      }
+      async function draw_hud(){
+        //TODO
+        //clear out hud
+        //get game state
+        //set hud based on game state
+      }
+      async function show_menu(pos){
+        let show_owned_units = true;
+        document.getElementById("remove_unit_button").style.display="none"
+        document.getElementById("selected_unit").style.display = "none"
+        document.getElementById("move_unit").style.display = "none"
+        document.getElementById("attack").style.display = "none"
+
+
+        let terrain_id = await war_core_instance.methods.get_terrain_type(pos.tile_x, pos.tile_y, game_id).call()
+
+        document.getElementById("tile_detail_coords").innerText = pos.tile_x+", "+pos.tile_y + " ["+Terrain_Types[terrain_id]+"]"
+
+        if(check_occupancy(pos.tile_x, pos.tile_y)){
+          let token_stats = is_occupied[pos.tile_x][pos.tile_y];
+          selected_unit = all_tokens[token_stats.token_id]
+
+          let owner =token_stats.owner;
+          document.getElementById("selected_unit").style.display = "block"
+          let unit_icon_canvas = await get_assembled_piece(selected_unit.stats, selected_unit.rarity, 256);
+
+          document.getElementById("selected_unit_img").src =  unit_icon_canvas.toDataURL();
+          document.getElementById("selected_unit_img").style.width = "50%"
+
+          document.getElementById("stat_rarity").innerText = selected_unit.rarity;
+          document.getElementById("stats_cost").innerText = selected_unit.rarity*10;
+          document.getElementById("stat_sr_atk").innerText = selected_unit.stats[0][0];
+
+
+          document.getElementById("stat_lr_atk").innerText = selected_unit.stats[1][0];
+          document.getElementById("stat_def_atk").innerText = selected_unit.stats[2][0];
+          document.getElementById("stat_spd_atk").innerText = selected_unit.stats[3][0];
+          document.getElementById("stat_max_h_atk").innerText = is_occupied[pos.tile_x][pos.tile_y].hp;
+          document.getElementById("stat_owner").innerText = owner.substring(0,5) + "~"+ owner.substring(owner.length-4)
+
+          if(token_stats.owner === accounts[0].toLowerCase()){
+            document.getElementById("remove_unit_button").style.display="inline-block"
+
+            if(
+              players[game_details.player_turn].is_user
+              && token_stats.last_turn !== game_details.game_turn
+            ) {
+              document.getElementById("move_unit").style.display="inline-block"
+              document.getElementById("attack").style.display="inline-block"
+            }
+
+          } else {
+            document.getElementById("remove_unit_button").style.display="none"
+            document.getElementById("move_unit").style.display="none"
+            document.getElementById("attack").style.display="none"
+          }
+          show_owned_units = false;
+        }
+
+        let unit_list = document.getElementById("unit_list")
+        unit_list.innerHTML = ""
+        for(let unit_idx = 0; unit_idx < owned_tokens.length && show_owned_units; unit_idx++){
+
+          //show unit icon on unit_list
+          let unit_canvas = await get_assembled_piece(owned_tokens[unit_idx].stats,owned_tokens[unit_idx].rarity, 128);
+          unit_canvas.style.margin = "1vw"
+          unit_canvas.onclick = async (evt)=>{
+            let unit_icons = document.getElementsByClassName("unit_icons")
+            for(let unit_idx = 0; unit_idx < unit_icons.length; unit_idx++){
+              unit_icons[unit_idx].style.border = "none"
+            }
+            evt.target.style.border = "thin black solid"
+            document.getElementById("selected_unit").style.display = "block"
+            selected_unit = owned_tokens[unit_idx]
+
+            let unit_icon_canvas = await get_assembled_piece(selected_unit.stats, selected_unit.rarity, 256);
+
+            document.getElementById("selected_unit_img").src =  unit_icon_canvas.toDataURL();
+            document.getElementById("selected_unit_img").style.width = "50%"
+
+            // list stats on "unit_stats"
+            console.log(selected_unit)
+            document.getElementById("stat_rarity").innerText = owned_tokens[unit_idx].rarity;
+            document.getElementById("stats_cost").innerText = owned_tokens[unit_idx].rarity*10;
+            document.getElementById("stat_sr_atk").innerText = owned_tokens[unit_idx].stats[0][0];
+
+
+            document.getElementById("stat_lr_atk").innerText = owned_tokens[unit_idx].stats[1][0];
+            document.getElementById("stat_def_atk").innerText = owned_tokens[unit_idx].stats[2][0];
+            document.getElementById("stat_spd_atk").innerText = owned_tokens[unit_idx].stats[3][0];
+            document.getElementById("stat_max_h_atk").innerText =owned_tokens[unit_idx].stats[4][0];
+
+            let buttons = document.getElementById("unit_placement_buttons");
+            buttons.innerHTML = "";
+            buttons.style.display="block";
+            let place_title = document.createElement("h4")
+            place_title.innerText = "Place Unit:"
+            buttons.appendChild(place_title)
+            for(let place_button_idx = 1; place_button_idx <= 32; place_button_idx++){
+              let unit_place_button = document.createElement("button")
+              unit_place_button.onclick=()=>{
+                place_selected_unit(place_button_idx)
+              }
+
+              // TODO
+              if(placed_units[accounts[0].toLowerCase()][place_button_idx-1] != null){
+                unit_place_button.innerText = "[*]"
+              }else {
+                unit_place_button.innerText = "[ ]"
+              }
+
+              buttons.appendChild(unit_place_button)
+            }
+
+          }
+          unit_canvas.style.width = "16%"
+          unit_canvas.style.margin = "1vw"
+          unit_canvas.className="unit_icons"
+          unit_list.appendChild(unit_canvas)
+        }
+
+        document.getElementById("menu_div").style.display = "block"
+
+      }
+
+      function hide_menu(){
+        document.getElementById("selected_unit").style.display = "none"
+          document.getElementById("menu_div").style.display = "none"
+      }
+
+      let handling_map_click = false;
+      async function map_click_handlier(evt){
+        if(handling_map_click){
+          return;
+        }
+        handling_map_click = true;
+        let canvas = document.getElementById("main_map_canvas")
+
+        let tile_size = 32;
+
+        let pos = getMousePos(canvas, evt)
+
+
+        let scaled_pos = {
+          tile_x: Math.floor((pos.x/24)),
+          tile_y: Math.floor((pos.y)/32)
+        }
+        if(scaled_pos.tile_x < 0){
+
+        }else if(selected_tile.tile_x === scaled_pos.tile_x && selected_tile.tile_y === scaled_pos.tile_y){
+          deselect_tile();
+        } else {
+          select_tile(scaled_pos);
+        }
+        handling_map_click = false;
+      }
+      function addImageProcess(src) {
+             return new Promise((resolve, reject) => {
+                 let img = new Image()
+                 img.onload = () => resolve(img)
+                 img.onerror = ()=>reject("Failed to load")
+                 img.src = src;
+             })
+         }
+      function  getMousePos(canvas, evt) {
+        var rect = canvas.getBoundingClientRect(), // abs. size of element
+            scaleX = canvas.width / rect.width,    // relationship bitmap vs. element for X
+            scaleY = canvas.height / rect.height;  // relationship bitmap vs. element for Y
+
+        return {
+          x: (evt.clientX - rect.left) * scaleX,   // scale mouse coordinates after they have
+          y: (evt.clientY - rect.top) * scaleY     // been adjusted to be relative to element
+        }
+      }
+
+      let terrain = {};
+
+
+      let terrain_canvas;
+      let terrain_rendered = false
+
+      function clear_cache(){
+        localStorage.removeItem("terrain_rendered_"+game_id);
+        localStorage.removeItem("terrain__"+game_id);
+        localStorage.removeItem("terrain_canvas_"+game_id);
+      }
+
+      async function draw_map(x,y){
+        console.log("drawing map")
+
+
+        terrain_rendered = localStorage.getItem('terrain_rendered_'+game_id) !== null && localStorage.getItem('terrain_rendered_'+game_id);
+
+        let canvas = document.getElementById("main_map_canvas")
+        let context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+
+        let terrain_size = 32;
+        let source_sprite_size = 32;
+        let y_tiles = canvas.height/terrain_size;
+        let x_tiles = canvas.width/terrain_size;
+        let terrain_context
+
+        if(terrain_canvas === undefined){
+          if(terrain_rendered){
+            terrain_canvas = await addImageProcess(localStorage.getItem('terrain_canvas_'+game_id))
+            terrain =JSON.parse(localStorage.getItem("terrain_" + game_id))
+          } else {
+            terrain_canvas = document.createElement("canvas")
+            terrain_canvas.width = canvas.width;
+            terrain_canvas.height = canvas.height;
+            terrain_context = terrain_canvas.getContext('2d');
+          }
+
+        }
+
+
+        if(terrain_rendered){
+          context.drawImage(terrain_canvas, 0,0)
+        } else {
+          for(let y_idx = 0; y_idx < y_tiles ;y_idx++){
+
+            for(let x_idx = 0; x_idx < x_tiles; x_idx++){
+              let xf = x_idx*24
+              let yf = (y_idx*32) + ((x_idx%2) *  16)
+
+
+              if(terrain[x_idx] === undefined){
+                terrain[x_idx] = {}
+              }
+              let terrain_type = get_terrain_type_X(( x_idx), ( y_idx), game_id);
+              terrain[x_idx][y_idx] = terrain_type
+
+              switch(terrain_type){
+                case 0:
+                  terrain_context.drawImage(water_array[getRandomInt(99999)%water_array.length],0,0,32,32, xf, yf,32,32);
+                  break;
+                case 1:
+                  terrain_context.drawImage(sand_array[getRandomInt(99999)%sand_array.length],0,0,32,32, xf, yf,32,32);
+                  break;
+                case 2:
+                  terrain_context.drawImage(grass_1_array[getRandomInt(99999)%grass_1_array.length],0,0,32,32, xf, yf,32,32);
+                  break;
+                case 3:
+                  terrain_context.drawImage(grass_2_array[getRandomInt(99999)%grass_2_array.length],0,0,32,32, xf, yf,32,32);
+                  break;
+                case 4:
+                  terrain_context.drawImage(mountain_array[getRandomInt(99999)%mountain_array.length],0,0,32,32, xf, yf,32,32);
+                  break;
+                default:
+                  break;
+              }
+
+
+            }
+          }
+        }
+
+        for(var x_x in is_occupied){
+           for(var y_y in is_occupied[x_x]){
+
+             let xf = x_x*24
+             let yf = (y_y*32) + ((x_x%2) *  16)
+             let unit =   is_occupied[x_x][y_y];
+             let bg_tile
+             if(unit.owner === accounts[0].toLowerCase()){
+
+
+               if(unit.last_turn !== game_details.game_turn){
+                 bg_tile = await get_sprite("bg_tile.png", source_sprite_size, 0, 0, terrain_size)
+
+               } else{
+                 bg_tile = await get_sprite("bg_tile_yellow.png", source_sprite_size, 0, 0, terrain_size)
+
+               }
+
+             } else {
+               bg_tile = await get_sprite("bg_tile_enemy.png", source_sprite_size, 0, 0, terrain_size)
+
+             }
+
+             context.drawImage(bg_tile,0,0,32,32, xf, yf,32,32);
+
+
+              let unit_icon_canvas = await get_assembled_piece(all_tokens[unit.token_id].stats, all_tokens[unit.token_id].rarity, 32)
+
+              context.drawImage(unit_icon_canvas,0,0,32,32, xf, yf,32,32);
+
+           }
+         }
+
+        if(!terrain_rendered){
+
+          try{
+            localStorage.setItem("terrain_rendered_"+game_id, true);
+            localStorage.setItem("terrain_canvas_"+game_id, terrain_canvas.toDataURL());
+            localStorage.setItem("terrain_"+game_id,JSON.stringify(terrain));
+            terrain_rendered = true;
+          } catch(ex){
+            //this can happen is localStorage is full, so dump it and populate_game again
+            cleanLocalStorage()
+          }
+
+
+          populate_game()
+        }
+      }
+
+
+      function cleanLocalStorage() {
+          for(key in localStorage) {
+              delete localStorage[key];
+          }
+      }
+
+      function getRandomInt(max) {
+        return Math.floor(Math.random() * max);
+      }
+
+
+
+      let mouse_move_tile_x;
+      let mouse_move_tile_y;
+      async function move_unit(){
+        await hide_menu()
+        let main_map_canvas = document.getElementById("main_map_canvas")
+
+
+        let old_click = main_map_canvas.onclick;
+        main_map_canvas.onclick = async (evt)=> {
+          let tile_size = 32;
+          let pos = getMousePos(main_map_canvas, evt)
+          let scaled_pos = {
+            tile_x: Math.floor((pos.x/24)),
+            tile_y: Math.floor((pos.y)/32)
+          }
+
+          let dist = get_distance({x:selected_tile.tile_x,y:selected_tile.tile_y},{x:mouse_move_tile_x,y:mouse_move_tile_y})
+          let spd = selected_unit.stats[3][0]
+          if( !check_occupancy(mouse_move_tile_x,mouse_move_tile_y)
+              && (terrain[mouse_move_tile_x][mouse_move_tile_y] == "1"
+            || terrain[mouse_move_tile_x][mouse_move_tile_y] == "2"
+            || terrain[mouse_move_tile_x][mouse_move_tile_y] == "3")
+            && dist <= spd
+
+              ){
+                //move here
+
+                await war_core_instance.methods.move_unit(
+                    game_id,
+                    is_occupied[selected_tile.tile_x][ selected_tile.tile_y].slot,
+                    mouse_move_tile_x,
+                    mouse_move_tile_y
+                ).send({from:accounts[0]});
+                await populate_game();
+          }
+
+
+
+
+          main_map_canvas.style.cursor = "url('img/cursor_default.png'), auto"
+          main_map_canvas.onclick = old_click;
+          main_map_canvas.onmousemove = undefined;
+        }
+
+        main_map_canvas.onmousemove  = (evt) =>{
+
+
+          let tile_size = 32;
+          let pos = getMousePos(main_map_canvas, evt)
+          let scaled_pos = {
+            tile_x: Math.floor((pos.x/24)),
+            tile_y: Math.floor((pos.y)/32)
+          }
+          if(scaled_pos.tile_x !== mouse_move_tile_x
+              || scaled_pos.tile_y !== mouse_move_tile_y)
+          {
+            main_map_canvas.style.cursor = "url('img/cursor_move.png') 18 18, auto"
+            mouse_move_tile_x = scaled_pos.tile_x
+            mouse_move_tile_y = scaled_pos.tile_y
+            if(check_occupancy(mouse_move_tile_x,mouse_move_tile_y)){
+              console.log(is_occupied[mouse_move_tile_x][mouse_move_tile_y])
+              main_map_canvas.style.cursor = "url('img/cursor_cannot_move.png') 18 18, auto"
+            }
+            //check terrain
+            if(  terrain[mouse_move_tile_x][mouse_move_tile_y] == "1"
+              || terrain[mouse_move_tile_x][mouse_move_tile_y] == "2"
+              || terrain[mouse_move_tile_x][mouse_move_tile_y] == "3"){
+
+            } else {
+
+              main_map_canvas.style.cursor = "url('img/cursor_cannot_move.png') 18 18, auto"
+            }
+
+            let dist = get_distance({x:selected_tile.tile_x,y:selected_tile.tile_y},{x:mouse_move_tile_x,y:mouse_move_tile_y})
+            let spd = selected_unit.stats[3][0]
+            if(dist*0.66 >= spd){
+              main_map_canvas.style.cursor = "url('img/cursor_cannot_move.png') 18 18, auto"
+            }
+          }
+
+        }
+
+        // TODO
+        // on escape or click or click on menu, reassign main_map_canvas.onclick to map_click_handlier
+
+
+      }
+      async function attack(){
+        await hide_menu()
+        let main_map_canvas = document.getElementById("main_map_canvas")
+
+
+        let old_click = main_map_canvas.onclick;
+        main_map_canvas.onclick = async (evt)=> {
+            let tile_size = 32;
+          let pos = getMousePos(main_map_canvas, evt)
+          let scaled_pos = {
+            tile_x: Math.floor((pos.x/24)),
+            tile_y: Math.floor((pos.y)/32)
+          }
+
+          if(mouse_move_tile_x !== scaled_pos.tile_x || mouse_move_tile_y !== scaled_pos.tile_y){
+            mouse_move_tile_x = scaled_pos.tile_x
+            mouse_move_tile_y = scaled_pos.tile_y
+          }
+
+          if(
+              check_occupancy(mouse_move_tile_x,mouse_move_tile_y)
+              && is_occupied[mouse_move_tile_x][mouse_move_tile_y].owner !== accounts[0].toLowerCase()){
+            let dist = get_distance({x:selected_tile.tile_x,y:selected_tile.tile_y},{x:scaled_pos.tile_x,y:scaled_pos.tile_y})
+            let lr_distance = 15;
+            let sr_distance = 5;
+
+
+            if(dist <= lr_distance){
+
+              try{
+                await war_core_instance.methods.attack(
+                                              game_id,
+                                              is_occupied[selected_tile.tile_x][selected_tile.tile_y].slot,
+                                              is_occupied[mouse_move_tile_x][mouse_move_tile_y].owner,
+                                              is_occupied[mouse_move_tile_x][mouse_move_tile_y].slot
+                                              ).send({from:accounts[0]})
+
+
+
+                // TODO update screen
+
+                await populate_game()
+
+              } catch(ex){}
+
+            }
+          }
+
+
+
+          main_map_canvas.style.cursor = "url('img/cursor_default.png'), auto"
+          main_map_canvas.onclick = old_click;
+
+          main_map_canvas.onmousemove = undefined;
+        }
+
+        main_map_canvas.onmousemove  = (evt) =>{
+
+
+          let tile_size = 32;
+          let pos = getMousePos(main_map_canvas, evt)
+          let scaled_pos = {
+            tile_x: Math.floor((pos.x/24)),
+            tile_y: Math.floor((pos.y)/32)
+          }
+
+
+          if(mouse_move_tile_x !== scaled_pos.tile_x || mouse_move_tile_y !== scaled_pos.tile_y){
+
+            main_map_canvas.style.cursor = "url('img/cursor_cannot_attack.png'), auto"
+            mouse_move_tile_x = scaled_pos.tile_x
+            mouse_move_tile_y = scaled_pos.tile_y
+
+            let dist = get_distance({x:selected_tile.tile_x,y:selected_tile.tile_y},{x:scaled_pos.tile_x,y:scaled_pos.tile_y})
+
+            let lr_distance = 15;
+            let sr_distance = 5;
+            if(check_occupancy(mouse_move_tile_x,mouse_move_tile_y)
+                && is_occupied[mouse_move_tile_x][mouse_move_tile_y].owner !== accounts[0].toLowerCase()){
+              if(dist < sr_distance){
+                main_map_canvas.style.cursor = "url('img/cursor_attack.png'), auto"
+              } else if(dist < lr_distance){
+                main_map_canvas.style.cursor = "url('img/cursor_bow.png'), auto"
+              }
+            }
+
+          }
+        }
+
+            // TODO
+            // on escape or click or click on menu, reassign main_map_canvas.onclick to map_click_handlier
+
+      }
+      async function draw_sprites_on_map(file_name){
+
+        let canvas = document.getElementById("main_map_canvas")
+        let context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        let y_tiles = canvas.height/32;
+        let x_tiles = canvas.width/32;
+
+        for(let y_idx = 0; y_idx < y_tiles;y_idx++){
+          for(let x_idx = 0; x_idx < x_tiles; x_idx++){
+
+            let to_draw =  await get_sprite(file_name, 32, x_idx, y_idx, 32)
+            context.drawImage(to_draw, 32*x_idx, 32*y_idx);
+
+          }
+        }
+      }
+      async function draw_sprite_on_map(file_name, x, y){
+        let sprite_to_draw = await get_sprite(file_name, 16, x, y, 32)
+        let canvas = document.getElementById("main_map_canvas")
+        let context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(sprite_to_draw, 0, 0);
+      }
+
+      let sprites = {}
+
+      function load_img(src){
+        return new Promise((resolve, reject) => {
+          let img = new Image()
+          img.onload = () => resolve(img)
+          img.onerror = reject
+          img.src = src
+        })
+      }
+
+      async function get_sprite(sheet_name, tile_size, index_x, index_y, output_size){
+
+        let lookup_name = sheet_name.split(".")[0]+index_x + "_" + index_y+"_"+ output_size;
+
+
+        if(!sprites[lookup_name+'Loaded']){
+
+
+          sprites[lookup_name+'Image'] = await load_img("img/"+sheet_name) ;
+
+          sprites[lookup_name+'Canvas'] = document.createElement('canvas');
+          sprites[lookup_name+'Canvas'].width = output_size;
+          sprites[lookup_name+'Canvas'].height = output_size;
+          sprites[lookup_name+'Context'] = sprites[lookup_name+'Canvas'].getContext('2d');
+
+          //sprites[lookup_name+'Context'].scale(output_size/tile_size,output_size/tile_size)
+
+
+          sprites[lookup_name+'Context']
+          .drawImage(sprites[lookup_name+'Image'],
+                tile_size*index_x, tile_size*index_y, tile_size, tile_size, 0, 0, output_size, output_size);
+
+
+
+          sprites[lookup_name+'Loaded'] = true;
+
+
+
+        }
+
+        return sprites[lookup_name+'Image'];
+        //context.drawImage(get_sprite("image_name.gif"), x, y);
+      }
+
+
+      async function approve(){
+        await unit_token_instance.methods.setApprovalForAll(war_core_address, true).send({from:accounts[0]})
+
+      }
+
+      async function transfer_units(){
+        await unit_token_instance.methods.safeBatchTransferFrom(accounts[0], "0xAA7421315A19468b1C1013229Ca11B23c1099228",
+        [14, 31],[1,1],
+        "0x00").send({from:accounts[0]})
+      }
+      let owned_tokens = [];
+
+      async function populate_unit_list(){
+        owned_tokens = [];
+        //empty unit list
+        let unit_list_single = await unit_token_instance.getPastEvents(
+          "TransferSingle",
+        {
+          fromBlock: "0",
+          toBlock: "latest",
+          filter: {"to":accounts[0]}
+        } )
+        let unit_list_batch = await unit_token_instance.getPastEvents(
+          "TransferBatch",
+          {
+            fromBlock: "0",
+            toBlock: "latest",
+            filter:{"to": accounts[0]}
+          }
+        )
+        let unit_list = document.getElementById("unit_list")
+        let possible_unit_ids = unit_list_single.map((unit_event) => {
+          return unit_event.returnValues.id;
+        }).concat(unit_list_batch.flatMap((unit_batch_event) => {
+          return unit_batch_event.returnValues.ids;
+        }));
+
+        // get list of ids get balance of batch
+        //foreach with balance > 0
+          //show that in
+
+        let unique_units = possible_unit_ids.getUnique()
+
+        let balances = await unit_token_instance.methods.balanceOfBatch(
+          Array(unique_units.length).fill(accounts[0]),
+          unique_units
+        ).call();
+
+        for(let token_idx =0; token_idx < unique_units.length; token_idx++){
+
+          if(balances[token_idx] !== "0"){
+            //list unit
+            owned_tokens.push( all_tokens[unique_units[token_idx]])
+          }
+
+
+        }
+
+      }
+      Array.prototype.getUnique = function() {
+          var o = {}, a = []
+          for (var i = 0; i < this.length; i++) o[this[i]] = 1
+          for (var e in o) a.push(e)
+          return a
+      }
+      let all_tokens = JSON.parse("{\"0\":{\"token_id\":0,\"rarity\":\"8\",\"stats\":[[\"1448\",0,2550],[\"584\",0,2550],[\"328\",0,2550],[\"27\",0,32],[\"18880\",0,25500]]},\"1\":{\"token_id\":1,\"rarity\":\"9\",\"stats\":[[\"1125\",0,2550],[\"423\",0,2550],[\"672\",0,2550],[\"13\",0,32],[\"450\",0,25500]]},\"2\":{\"token_id\":2,\"rarity\":\"3\",\"stats\":[[\"315\",0,2550],[\"45\",0,2550],[\"140\",0,2550],[\"9\",0,32],[\"5010\",0,25500]]},\"3\":{\"token_id\":3,\"rarity\":\"4\",\"stats\":[[\"524\",0,2550],[\"44\",0,2550],[\"260\",0,2550],[\"14\",0,32],[\"6400\",0,25500]]},\"4\":{\"token_id\":4,\"rarity\":\"6\",\"stats\":[[\"1374\",0,2550],[\"402\",0,2550],[\"286\",0,2550],[\"13\",0,32],[\"900\",0,25500]]},\"5\":{\"token_id\":5,\"rarity\":\"1\",\"stats\":[[\"10\",0,2550],[\"12\",0,2550],[\"44\",0,2550],[\"7\",0,32],[\"50\",0,25500]]},\"6\":{\"token_id\":6,\"rarity\":\"8\",\"stats\":[[\"1512\",0,2550],[\"592\",0,2550],[\"328\",0,2550],[\"26\",0,32],[\"1200\",0,25500]]},\"7\":{\"token_id\":7,\"rarity\":\"7\",\"stats\":[[\"301\",0,2550],[\"882\",0,2550],[\"235\",0,2550],[\"21\",0,32],[\"5670\",0,25500]]},\"8\":{\"token_id\":8,\"rarity\":\"8\",\"stats\":[[\"480\",0,2550],[\"1240\",0,2550],[\"312\",0,2550],[\"22\",0,32],[\"13120\",0,25500]]},\"9\":{\"token_id\":9,\"rarity\":\"10\",\"stats\":[[\"2450\",0,2550],[\"1640\",0,2550],[\"136\",0,2550],[\"15\",0,32],[\"5100\",0,25500]]},\"10\":{\"token_id\":10,\"rarity\":\"7\",\"stats\":[[\"1372\",0,2550],[\"861\",0,2550],[\"588\",0,2550],[\"12\",0,32],[\"10290\",0,25500]]},\"11\":{\"token_id\":11,\"rarity\":\"10\",\"stats\":[[\"1660\",0,2550],[\"500\",0,2550],[\"370\",0,2550],[\"17\",0,32],[\"23400\",0,25500]]},\"12\":{\"token_id\":12,\"rarity\":\"6\",\"stats\":[[\"570\",0,2550],[\"822\",0,2550],[\"384\",0,2550],[\"9\",0,32],[\"2280\",0,25500]]},\"13\":{\"token_id\":13,\"rarity\":\"8\",\"stats\":[[\"1752\",0,2550],[\"1368\",0,2550],[\"429\",0,2550],[\"23\",0,32],[\"5920\",0,25500]]},\"14\":{\"token_id\":14,\"rarity\":\"4\",\"stats\":[[\"228\",0,2550],[\"428\",0,2550],[\"82\",0,2550],[\"9\",0,32],[\"1400\",0,25500]]},\"15\":{\"token_id\":15,\"rarity\":\"9\",\"stats\":[[\"54\",0,2550],[\"180\",0,2550],[\"486\",0,2550],[\"15\",0,32],[\"22950\",0,25500]]},\"16\":{\"token_id\":16,\"rarity\":\"1\",\"stats\":[[\"91\",0,2550],[\"131\",0,2550],[\"45\",0,2550],[\"8\",0,32],[\"1890\",0,25500]]},\"17\":{\"token_id\":17,\"rarity\":\"3\",\"stats\":[[\"396\",0,2550],[\"120\",0,2550],[\"211\",0,2550],[\"9\",0,32],[\"4800\",0,25500]]},\"18\":{\"token_id\":18,\"rarity\":\"9\",\"stats\":[[\"1710\",0,2550],[\"1899\",0,2550],[\"303\",0,2550],[\"13\",0,32],[\"15570\",0,25500]]},\"19\":{\"token_id\":19,\"rarity\":\"5\",\"stats\":[[\"695\",0,2550],[\"490\",0,2550],[\"375\",0,2550],[\"8\",0,32],[\"6750\",0,25500]]},\"20\":{\"token_id\":20,\"rarity\":\"1\",\"stats\":[[\"12\",0,2550],[\"121\",0,2550],[\"58\",0,2550],[\"7\",0,32],[\"970\",0,25500]]},\"21\":{\"token_id\":21,\"rarity\":\"10\",\"stats\":[[\"730\",0,2550],[\"2140\",0,2550],[\"496\",0,2550],[\"17\",0,32],[\"19800\",0,25500]]},\"22\":{\"token_id\":22,\"rarity\":\"6\",\"stats\":[[\"1362\",0,2550],[\"144\",0,2550],[\"162\",0,2550],[\"7\",0,32],[\"3000\",0,25500]]},\"23\":{\"token_id\":23,\"rarity\":\"10\",\"stats\":[[\"2270\",0,2550],[\"1140\",0,2550],[\"680\",0,2550],[\"31\",0,32],[\"1600\",0,25500]]},\"24\":{\"token_id\":24,\"rarity\":\"7\",\"stats\":[[\"189\",0,2550],[\"938\",0,2550],[\"504\",0,2550],[\"13\",0,32],[\"15260\",0,25500]]},\"25\":{\"token_id\":25,\"rarity\":\"6\",\"stats\":[[\"1092\",0,2550],[\"564\",0,2550],[\"18\",0,2550],[\"8\",0,32],[\"2160\",0,25500]]},\"26\":{\"token_id\":26,\"rarity\":\"5\",\"stats\":[[\"245\",0,2550],[\"735\",0,2550],[\"176\",0,2550],[\"15\",0,32],[\"9100\",0,25500]]},\"27\":{\"token_id\":27,\"rarity\":\"6\",\"stats\":[[\"726\",0,2550],[\"444\",0,2550],[\"76\",0,2550],[\"19\",0,32],[\"5340\",0,25500]]},\"28\":{\"token_id\":28,\"rarity\":\"4\",\"stats\":[[\"536\",0,2550],[\"936\",0,2550],[\"125\",0,2550],[\"8\",0,32],[\"1960\",0,25500]]},\"29\":{\"token_id\":29,\"rarity\":\"2\",\"stats\":[[\"372\",0,2550],[\"414\",0,2550],[\"86\",0,2550],[\"11\",0,32],[\"4120\",0,25500]]},\"30\":{\"token_id\":30,\"rarity\":\"1\",\"stats\":[[\"188\",0,2550],[\"123\",0,2550],[\"46\",0,2550],[\"7\",0,32],[\"1870\",0,25500]]},\"31\":{\"token_id\":31,\"rarity\":\"2\",\"stats\":[[\"490\",0,2550],[\"96\",0,2550],[\"160\",0,2550],[\"8\",0,32],[\"2080\",0,25500]]},\"32\":{\"token_id\":32,\"rarity\":\"8\",\"stats\":[[\"2024\",0,2550],[\"1912\",0,2550],[\"666\",0,2550],[\"12\",0,32],[\"12000\",0,25500]]},\"33\":{\"token_id\":33,\"rarity\":\"7\",\"stats\":[[\"385\",0,2550],[\"707\",0,2550],[\"37\",0,2550],[\"24\",0,32],[\"6230\",0,25500]]},\"34\":{\"token_id\":34,\"rarity\":\"9\",\"stats\":[[\"585\",0,2550],[\"1134\",0,2550],[\"690\",0,2550],[\"24\",0,32],[\"12420\",0,25500]]},\"35\":{\"token_id\":35,\"rarity\":\"7\",\"stats\":[[\"1484\",0,2550],[\"931\",0,2550],[\"504\",0,2550],[\"11\",0,32],[\"3010\",0,25500]]},\"36\":{\"token_id\":36,\"rarity\":\"9\",\"stats\":[[\"2034\",0,2550],[\"567\",0,2550],[\"651\",0,2550],[\"8\",0,32],[\"2610\",0,25500]]},\"37\":{\"token_id\":37,\"rarity\":\"7\",\"stats\":[[\"1302\",0,2550],[\"1428\",0,2550],[\"392\",0,2550],[\"18\",0,32],[\"4060\",0,25500]]},\"38\":{\"token_id\":38,\"rarity\":\"7\",\"stats\":[[\"1141\",0,2550],[\"518\",0,2550],[\"23\",0,2550],[\"7\",0,32],[\"1890\",0,25500]]},\"39\":{\"token_id\":39,\"rarity\":\"10\",\"stats\":[[\"530\",0,2550],[\"110\",0,2550],[\"456\",0,2550],[\"17\",0,32],[\"11400\",0,25500]]},\"40\":{\"token_id\":40,\"rarity\":\"6\",\"stats\":[[\"1164\",0,2550],[\"1002\",0,2550],[\"480\",0,2550],[\"10\",0,32],[\"14340\",0,25500]]},\"41\":{\"token_id\":41,\"rarity\":\"7\",\"stats\":[[\"553\",0,2550],[\"994\",0,2550],[\"336\",0,2550],[\"12\",0,32],[\"10850\",0,25500]]},\"42\":{\"token_id\":42,\"rarity\":\"3\",\"stats\":[[\"345\",0,2550],[\"192\",0,2550],[\"183\",0,2550],[\"9\",0,32],[\"6600\",0,25500]]},\"43\":{\"token_id\":43,\"rarity\":\"8\",\"stats\":[[\"1080\",0,2550],[\"1096\",0,2550],[\"160\",0,2550],[\"20\",0,32],[\"1120\",0,25500]]},\"44\":{\"token_id\":44,\"rarity\":\"4\",\"stats\":[[\"140\",0,2550],[\"376\",0,2550],[\"220\",0,2550],[\"12\",0,32],[\"320\",0,25500]]},\"45\":{\"token_id\":45,\"rarity\":\"9\",\"stats\":[[\"1737\",0,2550],[\"1863\",0,2550],[\"171\",0,2550],[\"20\",0,32],[\"13770\",0,25500]]},\"46\":{\"token_id\":46,\"rarity\":\"9\",\"stats\":[[\"1413\",0,2550],[\"360\",0,2550],[\"78\",0,2550],[\"16\",0,32],[\"17100\",0,25500]]},\"47\":{\"token_id\":47,\"rarity\":\"7\",\"stats\":[[\"602\",0,2550],[\"154\",0,2550],[\"172\",0,2550],[\"24\",0,32],[\"7070\",0,25500]]},\"48\":{\"token_id\":48,\"rarity\":\"2\",\"stats\":[[\"396\",0,2550],[\"374\",0,2550],[\"158\",0,2550],[\"10\",0,32],[\"3480\",0,25500]]},\"49\":{\"token_id\":49,\"rarity\":\"1\",\"stats\":[[\"94\",0,2550],[\"14\",0,2550],[\"66\",0,2550],[\"7\",0,32],[\"930\",0,25500]]},\"50\":{\"token_id\":50,\"rarity\":\"6\",\"stats\":[[\"702\",0,2550],[\"24\",0,2550],[\"336\",0,2550],[\"7\",0,32],[\"6060\",0,25500]]},\"51\":{\"token_id\":51,\"rarity\":\"7\",\"stats\":[[\"861\",0,2550],[\"1575\",0,2550],[\"212\",0,2550],[\"20\",0,32],[\"3220\",0,25500]]},\"52\":{\"token_id\":52,\"rarity\":\"4\",\"stats\":[[\"296\",0,2550],[\"676\",0,2550],[\"197\",0,2550],[\"14\",0,32],[\"5320\",0,25500]]},\"53\":{\"token_id\":53,\"rarity\":\"4\",\"stats\":[[\"204\",0,2550],[\"708\",0,2550],[\"182\",0,2550],[\"16\",0,32],[\"4800\",0,25500]]},\"54\":{\"token_id\":54,\"rarity\":\"3\",\"stats\":[[\"732\",0,2550],[\"492\",0,2550],[\"112\",0,2550],[\"11\",0,32],[\"1980\",0,25500]]},\"55\":{\"token_id\":55,\"rarity\":\"7\",\"stats\":[[\"357\",0,2550],[\"1484\",0,2550],[\"401\",0,2550],[\"24\",0,32],[\"15260\",0,25500]]},\"56\":{\"token_id\":56,\"rarity\":\"4\",\"stats\":[[\"876\",0,2550],[\"1012\",0,2550],[\"248\",0,2550],[\"12\",0,32],[\"2400\",0,25500]]},\"57\":{\"token_id\":57,\"rarity\":\"2\",\"stats\":[[\"80\",0,2550],[\"296\",0,2550],[\"26\",0,2550],[\"10\",0,32],[\"1700\",0,25500]]},\"58\":{\"token_id\":58,\"rarity\":\"9\",\"stats\":[[\"1350\",0,2550],[\"306\",0,2550],[\"312\",0,2550],[\"29\",0,32],[\"13680\",0,25500]]},\"59\":{\"token_id\":59,\"rarity\":\"10\",\"stats\":[[\"2330\",0,2550],[\"200\",0,2550],[\"263\",0,2550],[\"17\",0,32],[\"21000\",0,25500]]},\"60\":{\"token_id\":60,\"rarity\":\"5\",\"stats\":[[\"20\",0,2550],[\"460\",0,2550],[\"225\",0,2550],[\"12\",0,32],[\"10400\",0,25500]]},\"61\":{\"token_id\":61,\"rarity\":\"8\",\"stats\":[[\"1704\",0,2550],[\"1416\",0,2550],[\"437\",0,2550],[\"17\",0,32],[\"880\",0,25500]]},\"62\":{\"token_id\":62,\"rarity\":\"1\",\"stats\":[[\"103\",0,2550],[\"97\",0,2550],[\"20\",0,2550],[\"7\",0,32],[\"2520\",0,25500]]},\"63\":{\"token_id\":63,\"rarity\":\"6\",\"stats\":[[\"1308\",0,2550],[\"54\",0,2550],[\"348\",0,2550],[\"9\",0,32],[\"11700\",0,25500]]},\"64\":{\"token_id\":64,\"rarity\":\"1\",\"stats\":[[\"34\",0,2550],[\"222\",0,2550],[\"77\",0,2550],[\"7\",0,32],[\"10\",0,25500]]},\"65\":{\"token_id\":65,\"rarity\":\"6\",\"stats\":[[\"258\",0,2550],[\"564\",0,2550],[\"446\",0,2550],[\"20\",0,32],[\"11700\",0,25500]]},\"66\":{\"token_id\":66,\"rarity\":\"10\",\"stats\":[[\"660\",0,2550],[\"420\",0,2550],[\"246\",0,2550],[\"7\",0,32],[\"6900\",0,25500]]},\"67\":{\"token_id\":67,\"rarity\":\"10\",\"stats\":[[\"1900\",0,2550],[\"1260\",0,2550],[\"230\",0,2550],[\"14\",0,32],[\"23700\",0,25500]]},\"68\":{\"token_id\":68,\"rarity\":\"5\",\"stats\":[[\"425\",0,2550],[\"650\",0,2550],[\"150\",0,2550],[\"16\",0,32],[\"2550\",0,25500]]},\"69\":{\"token_id\":69,\"rarity\":\"6\",\"stats\":[[\"1110\",0,2550],[\"504\",0,2550],[\"154\",0,2550],[\"12\",0,32],[\"10380\",0,25500]]},\"70\":{\"token_id\":70,\"rarity\":\"9\",\"stats\":[[\"351\",0,2550],[\"576\",0,2550],[\"48\",0,2550],[\"21\",0,32],[\"20340\",0,25500]]},\"71\":{\"token_id\":71,\"rarity\":\"4\",\"stats\":[[\"892\",0,2550],[\"884\",0,2550],[\"146\",0,2550],[\"8\",0,32],[\"3640\",0,25500]]},\"72\":{\"token_id\":72,\"rarity\":\"10\",\"stats\":[[\"2510\",0,2550],[\"100\",0,2550],[\"370\",0,2550],[\"29\",0,32],[\"15800\",0,25500]]},\"73\":{\"token_id\":73,\"rarity\":\"6\",\"stats\":[[\"354\",0,2550],[\"1140\",0,2550],[\"306\",0,2550],[\"22\",0,32],[\"7560\",0,25500]]},\"74\":{\"token_id\":74,\"rarity\":\"9\",\"stats\":[[\"81\",0,2550],[\"918\",0,2550],[\"747\",0,2550],[\"7\",0,32],[\"11250\",0,25500]]},\"75\":{\"token_id\":75,\"rarity\":\"3\",\"stats\":[[\"183\",0,2550],[\"129\",0,2550],[\"193\",0,2550],[\"8\",0,32],[\"2310\",0,25500]]},\"76\":{\"token_id\":76,\"rarity\":\"1\",\"stats\":[[\"61\",0,2550],[\"161\",0,2550],[\"65\",0,2550],[\"8\",0,32],[\"2060\",0,25500]]},\"77\":{\"token_id\":77,\"rarity\":\"5\",\"stats\":[[\"880\",0,2550],[\"1225\",0,2550],[\"320\",0,2550],[\"11\",0,32],[\"6000\",0,25500]]},\"78\":{\"token_id\":78,\"rarity\":\"2\",\"stats\":[[\"476\",0,2550],[\"466\",0,2550],[\"151\",0,2550],[\"8\",0,32],[\"1840\",0,25500]]},\"79\":{\"token_id\":79,\"rarity\":\"3\",\"stats\":[[\"510\",0,2550],[\"114\",0,2550],[\"234\",0,2550],[\"10\",0,32],[\"7470\",0,25500]]},\"80\":{\"token_id\":80,\"rarity\":\"1\",\"stats\":[[\"0\",0,2550],[\"87\",0,2550],[\"5\",0,2550],[\"7\",0,32],[\"1830\",0,25500]]},\"81\":{\"token_id\":81,\"rarity\":\"7\",\"stats\":[[\"1078\",0,2550],[\"301\",0,2550],[\"219\",0,2550],[\"19\",0,32],[\"13020\",0,25500]]},\"82\":{\"token_id\":82,\"rarity\":\"4\",\"stats\":[[\"652\",0,2550],[\"328\",0,2550],[\"176\",0,2550],[\"11\",0,32],[\"5160\",0,25500]]},\"83\":{\"token_id\":83,\"rarity\":\"7\",\"stats\":[[\"133\",0,2550],[\"1596\",0,2550],[\"147\",0,2550],[\"8\",0,32],[\"8120\",0,25500]]},\"84\":{\"token_id\":84,\"rarity\":\"4\",\"stats\":[[\"892\",0,2550],[\"688\",0,2550],[\"156\",0,2550],[\"12\",0,32],[\"3640\",0,25500]]},\"85\":{\"token_id\":85,\"rarity\":\"2\",\"stats\":[[\"130\",0,2550],[\"204\",0,2550],[\"70\",0,2550],[\"9\",0,32],[\"4240\",0,25500]]},\"86\":{\"token_id\":86,\"rarity\":\"1\",\"stats\":[[\"221\",0,2550],[\"186\",0,2550],[\"76\",0,2550],[\"7\",0,32],[\"390\",0,25500]]},\"87\":{\"token_id\":87,\"rarity\":\"7\",\"stats\":[[\"1435\",0,2550],[\"1589\",0,2550],[\"163\",0,2550],[\"14\",0,32],[\"7630\",0,25500]]},\"88\":{\"token_id\":88,\"rarity\":\"2\",\"stats\":[[\"284\",0,2550],[\"124\",0,2550],[\"143\",0,2550],[\"7\",0,32],[\"2360\",0,25500]]},\"89\":{\"token_id\":89,\"rarity\":\"6\",\"stats\":[[\"1266\",0,2550],[\"1200\",0,2550],[\"60\",0,2550],[\"9\",0,32],[\"6000\",0,25500]]},\"90\":{\"token_id\":90,\"rarity\":\"8\",\"stats\":[[\"1000\",0,2550],[\"1384\",0,2550],[\"434\",0,2550],[\"14\",0,32],[\"2800\",0,25500]]},\"91\":{\"token_id\":91,\"rarity\":\"5\",\"stats\":[[\"865\",0,2550],[\"590\",0,2550],[\"70\",0,2550],[\"13\",0,32],[\"6800\",0,25500]]},\"92\":{\"token_id\":92,\"rarity\":\"3\",\"stats\":[[\"357\",0,2550],[\"645\",0,2550],[\"138\",0,2550],[\"9\",0,32],[\"3090\",0,25500]]},\"93\":{\"token_id\":93,\"rarity\":\"6\",\"stats\":[[\"1530\",0,2550],[\"618\",0,2550],[\"506\",0,2550],[\"13\",0,32],[\"11400\",0,25500]]},\"94\":{\"token_id\":94,\"rarity\":\"1\",\"stats\":[[\"39\",0,2550],[\"165\",0,2550],[\"43\",0,2550],[\"8\",0,32],[\"620\",0,25500]]},\"95\":{\"token_id\":95,\"rarity\":\"8\",\"stats\":[[\"152\",0,2550],[\"744\",0,2550],[\"453\",0,2550],[\"20\",0,32],[\"10960\",0,25500]]},\"96\":{\"token_id\":96,\"rarity\":\"3\",\"stats\":[[\"717\",0,2550],[\"237\",0,2550],[\"28\",0,2550],[\"10\",0,32],[\"6210\",0,25500]]},\"97\":{\"token_id\":97,\"rarity\":\"10\",\"stats\":[[\"350\",0,2550],[\"1620\",0,2550],[\"463\",0,2550],[\"14\",0,32],[\"7900\",0,25500]]},\"98\":{\"token_id\":98,\"rarity\":\"7\",\"stats\":[[\"1764\",0,2550],[\"1141\",0,2550],[\"312\",0,2550],[\"22\",0,32],[\"16660\",0,25500]]},\"99\":{\"token_id\":99,\"rarity\":\"4\",\"stats\":[[\"676\",0,2550],[\"568\",0,2550],[\"92\",0,2550],[\"13\",0,32],[\"2760\",0,25500]]},\"100\":{\"token_id\":100,\"rarity\":\"9\",\"stats\":[[\"1026\",0,2550],[\"162\",0,2550],[\"30\",0,2550],[\"11\",0,32],[\"21600\",0,25500]]},\"101\":{\"token_id\":101,\"rarity\":\"6\",\"stats\":[[\"552\",0,2550],[\"1524\",0,2550],[\"390\",0,2550],[\"8\",0,32],[\"11460\",0,25500]]},\"102\":{\"token_id\":102,\"rarity\":\"5\",\"stats\":[[\"455\",0,2550],[\"545\",0,2550],[\"60\",0,2550],[\"7\",0,32],[\"4800\",0,25500]]},\"103\":{\"token_id\":103,\"rarity\":\"5\",\"stats\":[[\"615\",0,2550],[\"685\",0,2550],[\"345\",0,2550],[\"18\",0,32],[\"7450\",0,25500]]},\"104\":{\"token_id\":104,\"rarity\":\"10\",\"stats\":[[\"1530\",0,2550],[\"2440\",0,2550],[\"260\",0,2550],[\"27\",0,32],[\"13600\",0,25500]]},\"105\":{\"token_id\":105,\"rarity\":\"9\",\"stats\":[[\"1314\",0,2550],[\"594\",0,2550],[\"342\",0,2550],[\"11\",0,32],[\"3330\",0,25500]]},\"106\":{\"token_id\":106,\"rarity\":\"10\",\"stats\":[[\"1210\",0,2550],[\"130\",0,2550],[\"176\",0,2550],[\"7\",0,32],[\"800\",0,25500]]},\"107\":{\"token_id\":107,\"rarity\":\"3\",\"stats\":[[\"102\",0,2550],[\"270\",0,2550],[\"42\",0,2550],[\"13\",0,32],[\"1710\",0,25500]]},\"108\":{\"token_id\":108,\"rarity\":\"1\",\"stats\":[[\"146\",0,2550],[\"82\",0,2550],[\"8\",0,2550],[\"9\",0,32],[\"1840\",0,25500]]},\"109\":{\"token_id\":109,\"rarity\":\"7\",\"stats\":[[\"406\",0,2550],[\"847\",0,2550],[\"452\",0,2550],[\"7\",0,32],[\"14840\",0,25500]]},\"110\":{\"token_id\":110,\"rarity\":\"3\",\"stats\":[[\"375\",0,2550],[\"117\",0,2550],[\"24\",0,2550],[\"8\",0,32],[\"1740\",0,25500]]},\"111\":{\"token_id\":111,\"rarity\":\"6\",\"stats\":[[\"408\",0,2550],[\"1392\",0,2550],[\"328\",0,2550],[\"18\",0,32],[\"8460\",0,25500]]},\"112\":{\"token_id\":112,\"rarity\":\"2\",\"stats\":[[\"510\",0,2550],[\"12\",0,2550],[\"41\",0,2550],[\"10\",0,32],[\"4000\",0,25500]]},\"113\":{\"token_id\":113,\"rarity\":\"9\",\"stats\":[[\"1296\",0,2550],[\"1656\",0,2550],[\"600\",0,2550],[\"24\",0,32],[\"2790\",0,25500]]},\"114\":{\"token_id\":114,\"rarity\":\"4\",\"stats\":[[\"748\",0,2550],[\"612\",0,2550],[\"162\",0,2550],[\"13\",0,32],[\"4880\",0,25500]]},\"115\":{\"token_id\":115,\"rarity\":\"7\",\"stats\":[[\"343\",0,2550],[\"882\",0,2550],[\"574\",0,2550],[\"22\",0,32],[\"17500\",0,25500]]},\"116\":{\"token_id\":116,\"rarity\":\"4\",\"stats\":[[\"300\",0,2550],[\"848\",0,2550],[\"8\",0,2550],[\"8\",0,32],[\"720\",0,25500]]},\"117\":{\"token_id\":117,\"rarity\":\"9\",\"stats\":[[\"126\",0,2550],[\"1206\",0,2550],[\"105\",0,2550],[\"22\",0,32],[\"15930\",0,25500]]},\"118\":{\"token_id\":118,\"rarity\":\"3\",\"stats\":[[\"228\",0,2550],[\"618\",0,2550],[\"239\",0,2550],[\"11\",0,32],[\"3840\",0,25500]]},\"119\":{\"token_id\":119,\"rarity\":\"8\",\"stats\":[[\"1624\",0,2550],[\"648\",0,2550],[\"621\",0,2550],[\"26\",0,32],[\"14400\",0,25500]]},\"120\":{\"token_id\":120,\"rarity\":\"3\",\"stats\":[[\"570\",0,2550],[\"729\",0,2550],[\"4\",0,2550],[\"10\",0,32],[\"2130\",0,25500]]},\"121\":{\"token_id\":121,\"rarity\":\"10\",\"stats\":[[\"2150\",0,2550],[\"600\",0,2550],[\"36\",0,2550],[\"10\",0,32],[\"24700\",0,25500]]},\"122\":{\"token_id\":122,\"rarity\":\"4\",\"stats\":[[\"560\",0,2550],[\"964\",0,2550],[\"50\",0,2550],[\"9\",0,32],[\"5440\",0,25500]]},\"123\":{\"token_id\":123,\"rarity\":\"7\",\"stats\":[[\"350\",0,2550],[\"1169\",0,2550],[\"569\",0,2550],[\"7\",0,32],[\"140\",0,25500]]},\"124\":{\"token_id\":124,\"rarity\":\"9\",\"stats\":[[\"2070\",0,2550],[\"432\",0,2550],[\"27\",0,2550],[\"22\",0,32],[\"6300\",0,25500]]},\"125\":{\"token_id\":125,\"rarity\":\"9\",\"stats\":[[\"1962\",0,2550],[\"1233\",0,2550],[\"756\",0,2550],[\"27\",0,32],[\"16740\",0,25500]]},\"126\":{\"token_id\":126,\"rarity\":\"8\",\"stats\":[[\"1472\",0,2550],[\"1304\",0,2550],[\"493\",0,2550],[\"16\",0,32],[\"1280\",0,25500]]},\"127\":{\"token_id\":127,\"rarity\":\"3\",\"stats\":[[\"753\",0,2550],[\"45\",0,2550],[\"124\",0,2550],[\"13\",0,32],[\"2460\",0,25500]]}}")
+    </script>
+  </body>
+</html>

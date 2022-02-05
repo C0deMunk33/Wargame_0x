@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title>War Game [Alpha]</title>
+    <style media="screen">
+      .showing {
+        display: inline-block;
+      }
+      .hidden {
+        display: none;
+      }
+      #game_list{
+        text-align: center;
+        width: 100%;
+      }
+      .game_details{
+        display: inline-block;
+        border: thin black solid;
+        padding:15px;
+        margin:15px;
+
+      }
+    </style>
+  </head>
+  <body>
+    <div class="">
+      <h3>Start Game</h3>
+      <table>
+        <tbody>
+          <tr>
+            <td>
+              <button onclick="start_new_game()">Start New Game</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="">
+      <h3>Faucet</h3>
+      <table>
+        <tbody>
+          <tr>
+            <td>
+              <button onclick="faucet()">Get Unit</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="game_list">
+
+    </div>
+    <div class="unit_list">
+
+    </div>
+    <script src="web3.min.js" charset="utf-8"></script>
+    <script src="wargame_abi.js" charset="utf-8"></script>
+    <script src="unit_token_abi.js" charset="utf-8"></script>
+    <script type="text/javascript">
+    let accounts;
+    /*
+    let war_core_address = "0x4b92CF1714B2078e0cE7F7819b181440E5f9fa29"
+    let unit_token_address =  "0xB8490E968c4065bc16Be77952e38548F3CbF4CE5"
+    */
+    //ropsten
+    let war_core_address = "0xFe9AD16Caf49EeF552B1183b4f9DeCfb7702177a"
+    let unit_token_address =  "0xfa1453Af15d324A99F6E1aecda74CCd09b06F866"
+
+    let war_core_instance
+    let unit_token_instance
+    async function start_new_game(){
+      await war_core_instance.methods.new_game().send({from:accounts[0]});
+      populate_game_list();
+    }
+    async function faucet(){
+      await unit_token_instance.methods.faucet().send({from: accounts[0]})
+
+      populate_unit_List();
+    }
+    const ethEnabled = async () => {
+      if (window.ethereum) {
+        accounts = (await window.ethereum.send('eth_requestAccounts')).result;
+        console.log(accounts)
+        window.web3 = new Web3(window.ethereum);
+        war_core_instance = new window.web3.eth.Contract(wargame_abi, war_core_address)
+        unit_token_instance = new window.web3.eth.Contract(unit_token_abi, unit_token_address)
+        populate_game_list()
+        populate_unit_List();
+        populate_user_details();
+        return true;
+      }
+      return false;
+    }
+
+    ethEnabled()
+
+    let Game_States = [
+      "No_Game",
+      "Open",
+      "Closed",
+      "Playing",
+      "Ended",
+      "Draw"]
+    let Player_States = [
+      "No_Player",
+      "Not_Ready",
+      "Ready",
+      "Win",
+      "Dead"
+    ]
+    let Stats = [
+      "short_range_atk",
+      "long_range_atk",
+      "defense",
+      "speed",
+      "max_hp"
+    ]
+    let Terrain_Types = [
+      "player_safe",
+      "water",
+      "sand",
+      "low_grass",
+      "high_grass",
+      "mountain"
+    ]
+
+    function truncate_address(address){
+      return address.substr(0,5) + "|" + address.substr(-3)
+    }
+
+    async function populate_game_list(){
+      //empty game list
+      //Game_Created event
+      let game_events = await war_core_instance.getPastEvents("Game_Created", {fromBlock: "0", toBlock: "latest"});
+      console.log(game_events)
+      let game_list = document.getElementById("game_list")
+      game_list.innerHTML = "";
+      for(let game_idx = 0; game_idx < game_events.length; game_idx++){
+        let game_div = document.createElement("div")
+        game_div.className="game_details"
+        //list only incomplete games?
+        let this_game_id = game_events[game_idx].returnValues.game_id;
+        let game_details = await war_core_instance.methods.games(this_game_id).call();
+        let player_count = await war_core_instance.methods.get_player_count(this_game_id).call()
+
+        let in_this_game = false;
+        let game_id_label = document.createElement("h4")
+        game_id_label.innerText = "Game ID:" +this_game_id;
+        game_div.appendChild(game_id_label)
+
+        let game_state_label = document.createElement("h4")
+        game_state_label.innerText = "Game State: " +Game_States[game_details.game_state];
+        game_div.appendChild(game_state_label);
+
+        let turn_number_label = document.createElement("h4")
+        turn_number_label.innerText = "Turn: " + game_details.game_turn;
+        game_div.appendChild(turn_number_label)
+
+
+        let info_button = document.createElement("button")
+        info_button.innerText = "info"
+        info_button.onclick = ()=>{
+          window.location.href = 'game.html?game_id=' + this_game_id;
+        }
+        game_div.appendChild(info_button)
+        let join_button = document.createElement("button")
+        join_button.innerText = "join"
+        join_button.className = "showing"
+        if(game_details.game_state.toString() === "1"){
+          game_div.appendChild(join_button)
+        }
+        join_button.onclick = async ()=>{
+          let join_id = this_game_id;
+          await war_core_instance.methods.join_game(join_id).send({from:accounts[0]})
+
+          populate_game_list();
+        }
+
+
+        let players_label = document.createElement("h4")
+        players_label.innerText = "Players: "
+        game_div.appendChild(players_label)
+
+
+        let players_div = document.createElement("div")
+
+
+
+        for(let player_idx = 0; player_idx < player_count; player_idx++){
+          let player = await war_core_instance.methods.get_player_by_index(this_game_id,player_idx).call();
+          console.log("player state: " + Player_States[player.player_state])
+          let player_div = document.createElement("div")
+
+
+
+
+          let player_address_label = document.createElement("h4")
+          if(player.player_address.toLowerCase() === accounts[0].toLowerCase()){
+            player_address_label.innerText = "* " + truncate_address(player.player_address);
+
+            join_button.className = "hidden"
+          } else {
+            player_address_label.innerText = truncate_address(player.player_address);
+          }
+          player_div.appendChild(player_address_label)
+
+          console.log(game_details)
+          console.log(player_idx)
+          if(player_idx.toString() === game_details.player_turn){
+            let turn_icon = document.createElement("span")
+            turn_icon.innerText = " <-"
+            player_address_label.appendChild(turn_icon)
+            //add join button
+          }
+          players_div.appendChild(player_div)
+        }
+
+        game_div.appendChild(players_div)
+        game_list.appendChild(game_div)
+        console.log(game_details)
+      }
+    }
+    async function populate_unit_List(){
+      //empty unit list
+      let unit_list_single = await unit_token_instance.getPastEvents(
+        "TransferSingle",
+      {
+        fromBlock: "0",
+        toBlock: "latest",
+        filter: {"to":accounts[0]}
+      } )
+      let unit_list_batch = await unit_token_instance.getPastEvents(
+        "TransferBatch",
+        {
+          fromBlock: "0",
+          toBlock: "0",
+          filter:{"to": accounts[0]}
+        }
+      )
+      let unit_list = document.getElementById("unit_list")
+      // get list of ids get balance of batch
+      //foreach with balance > 0
+        //show that in
+      console.log(unit_list_single)
+      //for each unit in unit_list balanceOf(accounts[0], unit_id)
+
+    }
+    async function populate_user_details(){
+
+    }
+    </script>
+  </body>
+</html>
